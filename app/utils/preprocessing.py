@@ -1,20 +1,22 @@
 import pandas as pd
+import numpy as np
 
-# ==========================================
-# FITUR MODEL SUHU
-# ==========================================
+# ==============================================================================
+# KONFIGURASI FITUR (MENGIKUTI PERMINTAAN FILE MODEL .PKL YANG AKTIF)
+# ==============================================================================
+
+# Berdasarkan Error Traceback: Model Suhu SUDAH DILATIH dengan fitur ini:
+# ['Suhu', 'Kelembapan', 'jam_dalam_hari', 'suhu_1jam_lalu', 'suhu_24jam_lalu', 'kelembapan_1jam_lalu']
 FEATURES_SUHU = [
     'Suhu',
     'Kelembapan',
     'jam_dalam_hari',
     'suhu_1jam_lalu',
     'suhu_24jam_lalu',
-    'kelembapan_1jam_lalu'
+    'kelembapan_1jam_lalu' 
 ]
 
-# ==========================================
-# FITUR MODEL HUJAN
-# ==========================================
+# Fitur Hujan (Kita pertahankan sesuai info terakhir Anda)
 FEATURES_HUJAN = [
     'CurahHujan',
     'jam_dalam_hari',
@@ -23,102 +25,131 @@ FEATURES_HUJAN = [
     'hari_dalam_minggu'
 ]
 
-# ==========================================
-# 1. TIMEZONE HANDLING
-# ==========================================
-def ensure_timezone(df, time_col='time'):
-    df[time_col] = pd.to_datetime(df[time_col], errors='coerce')
+# ==============================================================================
+# FUNGSI UTILITAS
+# ==============================================================================
 
+def ensure_timezone(df, time_col='time'):
+    """Memastikan kolom waktu memiliki timezone yang benar."""
+    df[time_col] = pd.to_datetime(df[time_col], errors='coerce')
+    df = df.dropna(subset=[time_col])
+    
     if df[time_col].dt.tz is None:
         df[time_col] = df[time_col].dt.tz_localize("UTC")
-
+    
+    # Convert ke WITA (Asia/Makassar)
     df[time_col] = df[time_col].dt.tz_convert("Asia/Makassar")
     return df
 
-# ==========================================
-# 2. NORMALISASI NAMA KOLOM (SAMAKAN DENGAN TRAINING)
-# ==========================================
 def normalize_columns(df):
-
-    if "temperature_2m (°C)" in df.columns:
-        df["Suhu"] = df["temperature_2m (°C)"]
-
-    if "relative_humidity_2m (%)" in df.columns:
-        df["Kelembapan"] = df["relative_humidity_2m (%)"]
-
-    if "rain (mm)" in df.columns:
-        df["CurahHujan"] = df["rain (mm)"]
-
+    """
+    Standarisasi nama kolom.
+    """
+    rename_map = {
+        "Waktu": "time", 
+        "temperature_2m (°C)": "Suhu",
+        "relative_humidity_2m (%)": "Kelembapan",
+        "rain (mm)": "CurahHujan",
+        "weather_code (wmo code)": "DeskripsiCuaca",
+    }
+    df.rename(columns=rename_map, inplace=True)
     return df
 
-# ==========================================
-# 3. KALENDAR FEATURES
-# ==========================================
 def add_calendar_features(df, time_col='time'):
     df["jam_dalam_hari"] = df[time_col].dt.hour
     df["hari_dalam_minggu"] = df[time_col].dt.dayofweek
     return df
 
-# ==========================================
-# 4. LAG FEATURES
-# ==========================================
 def add_lag_features(df):
+    """
+    Membuat fitur lag sesuai permintaan Model .PKL yang aktif.
+    """
+    
+    # Helper aman untuk mengambil kolom
+    def get_series(df, col_name):
+        if col_name in df.columns:
+            obj = df[col_name]
+            if isinstance(obj, pd.DataFrame):
+                return obj.iloc[:, 0]
+            return obj
+        return None
 
-    if "Suhu" in df.columns:
-        df["suhu_1jam_lalu"] = df["Suhu"].shift(1)
-        df["suhu_24jam_lalu"] = df["Suhu"].shift(24)
-        df["suhu_2jam_lalu"] = df["Suhu"].shift(2)
+    s_suhu = get_series(df, "Suhu")
+    s_hum = get_series(df, "Kelembapan")
+    s_rain = get_series(df, "CurahHujan")
 
-    if "Kelembapan" in df.columns:
-        df["kelembapan_1jam_lalu"] = df["Kelembapan"].shift(1)
+    # --- Fitur Lag Suhu ---
+    # Model meminta: suhu_1jam_lalu, suhu_24jam_lalu, suhu_2jam_lalu
+    if s_suhu is not None:
+        df["suhu_1jam_lalu"] = s_suhu.shift(1)
+        df["suhu_2jam_lalu"] = s_suhu.shift(2)
+        df["suhu_24jam_lalu"] = s_suhu.shift(24)
 
+    # --- Fitur Lag Kelembapan ---
+    # ERROR SEBELUMNYA BILANG MODEL MINTA: 'kelembapan_1jam_lalu'
+    if s_hum is not None:
+        df["kelembapan_1jam_lalu"] = s_hum.shift(1)  # <-- KITA KEMBALIKAN KE 1 JAM
+        
+    # --- Fitur Lag Hujan ---
+    if s_rain is not None:
+        df["CurahHujan_24jam_lalu"] = s_rain.shift(24)
+        
     return df
 
-# ==========================================
-# 5. KONVERSI SEMUA FITUR NUMERIK KE FLOAT
-# ==========================================
-def convert_types(df):
-    num_cols = [
-        'Suhu', 'Kelembapan', 'CurahHujan',
-        'suhu_1jam_lalu', 'suhu_24jam_lalu',
-        'kelembapan_1jam_lalu', 'suhu_2jam_lalu'
-    ]
-
-    for c in num_cols:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors='coerce')
-
-    return df
-
-# ==========================================
-# 6. FILL NA
-# ==========================================
-def fill_missing(df):
-    return df.ffill().bfill()
-
-# ==========================================
-# 7. MAIN FUNCTION
-# ==========================================
 def prepare_input(df):
+    """Pipeline preprocessing."""
+    df_processed = df.copy()
+    
+    # Cek & Fix nama kolom 'time'
+    if 'time' not in df_processed.columns:
+        if 'Waktu' in df_processed.columns:
+            df_processed.rename(columns={'Waktu': 'time'}, inplace=True)
+        elif isinstance(df_processed.index, pd.DatetimeIndex):
+            df_processed.reset_index(inplace=True)
+            df_processed.rename(columns={'index': 'time'}, inplace=True)
+        else:
+            return pd.DataFrame()
+    
+    # 1. Standarisasi
+    df_processed = ensure_timezone(df_processed, 'time')
+    df_processed = normalize_columns(df_processed)
+    
+    # Hapus duplikat kolom nama sama
+    df_processed = df_processed.loc[:, ~df_processed.columns.duplicated()]
 
-    df = df.copy().reset_index(drop=True)
+    # 2. Urutkan Waktu & Handle Duplikat Data
+    df_processed = df_processed.sort_values(by='time')
+    df_processed = df_processed.drop_duplicates(subset=['time'], keep='last')
 
-    df = ensure_timezone(df)
-    df = normalize_columns(df)
-    df = add_calendar_features(df)
-    df = add_lag_features(df)
+    # 3. Set Index & Resample
+    df_processed.set_index('time', inplace=True)
+    df_processed = df_processed.sort_index()
 
-    # 🔥 PAKSA SEMUA KOLOM NUMERIK JADI FLOAT
-    df = convert_types(df)
+    df_resampled = df_processed.resample('H').ffill()
+    df_resampled.reset_index(inplace=True)
 
-    df = fill_missing(df)
+    # 4. Feature Engineering
+    df_final = add_calendar_features(df_resampled, 'time')
+    
+    # Safety check sebelum lag
+    df_final = df_final.loc[:, ~df_final.columns.duplicated()]
+    
+    df_final = add_lag_features(df_final)
+    
+    # 5. Hapus NaN
+    df_final.dropna(inplace=True)
+    df_final.reset_index(drop=True, inplace=True)
 
-    last = df.iloc[[-1]].copy()
+    if df_final.empty:
+        return pd.DataFrame()
 
-    all_features = list(set(FEATURES_SUHU + FEATURES_HUJAN))
+    # Ambil baris terakhir
+    last_row = df_final.iloc[[-1]].copy()
 
-    missing = [c for c in all_features if c not in last.columns]
-    if missing:
-        raise ValueError(f"Missing required features: {missing}")
+    # --- VALIDASI PENTING ---
+    # Model Suhu MEMBUTUHKAN kolom 'Suhu' sebagai input fitur, bukan cuma lag.
+    # Kita pastikan kolom 'Suhu' asli terbawa.
+    if 'Suhu' not in last_row.columns and 'Suhu' in df_final.columns:
+         last_row['Suhu'] = df_final['Suhu'].iloc[-1]
 
-    return last[all_features]
+    return last_row
