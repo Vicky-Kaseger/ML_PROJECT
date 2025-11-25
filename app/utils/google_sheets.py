@@ -1,12 +1,26 @@
 import gspread
 import pandas as pd
 import numpy as np
+import os # NEW: To check if file exists
+import streamlit as st # NEW: To access cloud secrets
 from google.oauth2.service_account import Credentials
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 
 def get_client(json_path):
-    creds = Credentials.from_service_account_file(json_path, scopes=SCOPES)
+    # SCENARIO 1: Local Laptop (File exists)
+    if os.path.exists(json_path):
+        creds = Credentials.from_service_account_file(json_path, scopes=SCOPES)
+        
+    # SCENARIO 2: Streamlit Cloud (File missing, use Secrets)
+    # Make sure your secret in Streamlit is named [gcp_service_account]
+    elif "gcp_service_account" in st.secrets:
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
+        
+    else:
+        # If neither exists, stop everything
+        raise FileNotFoundError(f"Credentials not found! looked for file '{json_path}' and st.secrets['gcp_service_account']")
+
     client = gspread.authorize(creds)
     return client
 
@@ -30,15 +44,12 @@ def read_sheet(json_path, spreadsheet_id, sheet_name):
     df = pd.DataFrame(data_rows, columns=header)
     
     # --- 1. MAPPING HEADER DARI N8N (INDO) KE INTERAL SYSTEM ---
-    # Kiri: Header di Google Sheet (dari n8n)
-    # Kanan: Nama kolom yang dipakai di preprocessing.py
     rename_map = {
         "Waktu": "time",
         "Suhu": "Suhu",
         "Kelembapan": "Kelembapan",
         "CurahHujan": "CurahHujan",
         "DeskripsiCuaca": "DeskripsiCuaca",
-        # Jaga-jaga jika n8n mengirim variasi lain
         "Temp": "Suhu",
         "RH": "Kelembapan",
         "Rain": "CurahHujan"
@@ -53,9 +64,7 @@ def read_sheet(json_path, spreadsheet_id, sheet_name):
     if 'time' in df.columns:
         df['time'].replace('', pd.NA, inplace=True)
         df.dropna(subset=['time'], inplace=True)
-        # Pastikan format datetime bisa dibaca
         df['time'] = pd.to_datetime(df['time'], dayfirst=True, errors='coerce')
-        # Hapus yang gagal jadi tanggal (NaT)
         df.dropna(subset=['time'], inplace=True)
     
     df = df.reset_index(drop=True)
@@ -65,7 +74,6 @@ def read_sheet(json_path, spreadsheet_id, sheet_name):
     
     for col in numeric_cols:
         if col in df.columns:
-            # Ganti koma dengan titik, lalu ubah ke float
             df[col] = df[col].astype(str).str.replace(',', '.', regex=False)
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
