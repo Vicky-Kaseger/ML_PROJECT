@@ -107,12 +107,12 @@ def load_models():
     models = {}
     try:
         files = {
-            "suhu_1h": "model/suhu/suhu_1h.pkl",
-            "suhu_3h": "model/suhu/suhu_3h.pkl",
-            "suhu_6h": "model/suhu/suhu_6h.pkl",
-            "hujan_1h": "model/curahHujan/hujan_1h.pkl",
-            "hujan_3h": "model/curahHujan/hujan_3h.pkl",
-            "hujan_6h": "model/curahHujan/hujan_6h.pkl"
+            "suhu_1h": "app/model/suhu/suhu_1h.pkl",
+            "suhu_3h": "app/model/suhu/suhu_3h.pkl",
+            "suhu_6h": "app/model/suhu/suhu_6h.pkl",
+            "hujan_1h": "app/model/curahHujan/hujan_1h.pkl",
+            "hujan_3h": "app/model/curahHujan/hujan_3h.pkl",
+            "hujan_6h": "app/model/curahHujan/hujan_6h.pkl"
         }
         
         for key, path in files.items():
